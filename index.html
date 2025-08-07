@@ -83,32 +83,82 @@
         function playExplosionSound() {
             if (!isSoundEnabled || !audioContext) return;
             
-            // 폭발음 - 노이즈 기반
-            const bufferSize = audioContext.sampleRate * 0.3;
+            // 더 현실적인 폭발음 - 다층 구조
+            const currentTime = audioContext.currentTime;
+            
+            // 1. 초기 폭발 - 낮은 주파수 펀치
+            const kickOsc = audioContext.createOscillator();
+            const kickGain = audioContext.createGain();
+            const kickFilter = audioContext.createBiquadFilter();
+            
+            kickOsc.connect(kickFilter);
+            kickFilter.connect(kickGain);
+            kickGain.connect(audioContext.destination);
+            
+            kickOsc.frequency.setValueAtTime(80, currentTime);
+            kickOsc.frequency.exponentialRampToValueAtTime(20, currentTime + 0.1);
+            kickFilter.type = 'lowpass';
+            kickFilter.frequency.setValueAtTime(300, currentTime);
+            kickGain.gain.setValueAtTime(0.3, currentTime);
+            kickGain.gain.exponentialRampToValueAtTime(0.01, currentTime + 0.15);
+            
+            kickOsc.start(currentTime);
+            kickOsc.stop(currentTime + 0.15);
+            
+            // 2. 중간 주파수 크랙음
+            const crackOsc = audioContext.createOscillator();
+            const crackGain = audioContext.createGain();
+            const crackFilter = audioContext.createBiquadFilter();
+            
+            crackOsc.connect(crackFilter);
+            crackFilter.connect(crackGain);
+            crackGain.connect(audioContext.destination);
+            
+            crackOsc.frequency.setValueAtTime(400, currentTime);
+            crackOsc.frequency.exponentialRampToValueAtTime(150, currentTime + 0.2);
+            crackFilter.type = 'bandpass';
+            crackFilter.frequency.setValueAtTime(800, currentTime);
+            crackFilter.Q.setValueAtTime(5, currentTime);
+            crackGain.gain.setValueAtTime(0.15, currentTime);
+            crackGain.gain.exponentialRampToValueAtTime(0.01, currentTime + 0.2);
+            
+            crackOsc.start(currentTime + 0.02);
+            crackOsc.stop(currentTime + 0.22);
+            
+            // 3. 고주파 노이즈 (파편 소리)
+            const bufferSize = audioContext.sampleRate * 0.4;
             const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
             const output = buffer.getChannelData(0);
             
             for (let i = 0; i < bufferSize; i++) {
-                output[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+                const decay = Math.pow(1 - i / bufferSize, 3); // 더 빠른 감쇠
+                const noise = (Math.random() * 2 - 1) * decay;
+                const envelope = Math.sin((i / bufferSize) * Math.PI); // 부드러운 엔벨로프
+                output[i] = noise * envelope * 0.8;
             }
             
-            const source = audioContext.createBufferSource();
-            const gainNode = audioContext.createGain();
-            const filter = audioContext.createBiquadFilter();
+            const noiseSource = audioContext.createBufferSource();
+            const noiseGain = audioContext.createGain();
+            const noiseFilter = audioContext.createBiquadFilter();
+            const noiseFilter2 = audioContext.createBiquadFilter();
             
-            source.buffer = buffer;
-            source.connect(filter);
-            filter.connect(gainNode);
-            gainNode.connect(audioContext.destination);
+            noiseSource.buffer = buffer;
+            noiseSource.connect(noiseFilter);
+            noiseFilter.connect(noiseFilter2);
+            noiseFilter2.connect(noiseGain);
+            noiseGain.connect(audioContext.destination);
             
-            filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(800, audioContext.currentTime);
-            filter.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.3);
+            // 이중 필터링으로 더 자연스러운 소리
+            noiseFilter.type = 'highpass';
+            noiseFilter.frequency.setValueAtTime(1000, currentTime);
+            noiseFilter2.type = 'lowpass';
+            noiseFilter2.frequency.setValueAtTime(8000, currentTime);
+            noiseFilter2.frequency.exponentialRampToValueAtTime(2000, currentTime + 0.4);
             
-            gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            noiseGain.gain.setValueAtTime(0.2, currentTime + 0.01);
+            noiseGain.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.4);
             
-            source.start();
+            noiseSource.start(currentTime + 0.01);
         }
 
         function playHitSound() {
@@ -192,6 +242,262 @@
             oscillator.stop(audioContext.currentTime + 0.2);
         }
 
+        // BGM 시스템
+        let bgmGainNode;
+        let bgmOscillators = [];
+        let isBgmPlaying = false;
+        let bgmTimeoutId;
+        
+        // 음표 주파수 정의 (C4 = 261.63Hz 기준)
+        const notes = {
+            C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, B4: 493.88,
+            C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99, A5: 880.00, B5: 987.77
+        };
+
+        // 박진감 있는 멜로디 패턴 (액션 게임 스타일)
+        const bgmMelody = [
+            // 메인 멜로디 - 더 빠르고 강렬하게
+            { note: notes.E5, duration: 0.25 }, { note: notes.E5, duration: 0.25 },
+            { note: notes.F5, duration: 0.25 }, { note: notes.G5, duration: 0.25 },
+            { note: notes.E5, duration: 0.25 }, { note: notes.D5, duration: 0.25 },
+            { note: notes.C5, duration: 0.5 }, { note: 0, duration: 0.25 }, // 쉼표
+            
+            { note: notes.D5, duration: 0.25 }, { note: notes.D5, duration: 0.25 },
+            { note: notes.E5, duration: 0.25 }, { note: notes.F5, duration: 0.25 },
+            { note: notes.D5, duration: 0.25 }, { note: notes.C5, duration: 0.25 },
+            { note: notes.B4, duration: 0.5 }, { note: 0, duration: 0.25 }, // 쉼표
+            
+            { note: notes.C5, duration: 0.25 }, { note: notes.E5, duration: 0.25 },
+            { note: notes.G5, duration: 0.25 }, { note: notes.A5, duration: 0.25 },
+            { note: notes.G5, duration: 0.25 }, { note: notes.F5, duration: 0.25 },
+            { note: notes.E5, duration: 0.5 }, { note: 0, duration: 0.25 }, // 쉼표
+            
+            { note: notes.F5, duration: 0.25 }, { note: notes.A5, duration: 0.25 },
+            { note: notes.C5, duration: 0.25 }, { note: notes.F5, duration: 0.25 },
+            { note: notes.E5, duration: 0.25 }, { note: notes.D5, duration: 0.25 },
+            { note: notes.C5, duration: 0.75 }, { note: 0, duration: 0.25 } // 쉼표
+        ];
+
+        const bgmBass = [
+            // 더 강력한 베이스 라인 - 16비트로 쪼개서 박진감 UP
+            { note: notes.C4, duration: 0.5 }, { note: notes.C4, duration: 0.5 },
+            { note: notes.G4, duration: 0.5 }, { note: notes.C4, duration: 0.5 },
+            { note: notes.A4, duration: 0.5 }, { note: notes.A4, duration: 0.5 },
+            { note: notes.E4, duration: 0.5 }, { note: notes.A4, duration: 0.5 },
+            { note: notes.F4, duration: 0.5 }, { note: notes.F4, duration: 0.5 },
+            { note: notes.C4, duration: 0.5 }, { note: notes.F4, duration: 0.5 },
+            { note: notes.G4, duration: 0.5 }, { note: notes.G4, duration: 0.5 },
+            { note: notes.D4, duration: 0.5 }, { note: notes.G4, duration: 0.5 }
+        ];
+
+        function playBGMNote(frequency, startTime, duration, volume = 0.03, waveType = 'square') {
+            if (!isSoundEnabled || !audioContext || !isBgmPlaying || frequency === 0) return; // 쉼표(0) 처리
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            const filter = audioContext.createBiquadFilter();
+            const distortion = audioContext.createWaveShaper();
+            
+            oscillator.connect(filter);
+            filter.connect(distortion);
+            distortion.connect(gainNode);
+            gainNode.connect(bgmGainNode);
+            
+            oscillator.type = waveType;
+            oscillator.frequency.setValueAtTime(frequency, startTime);
+            
+            // 더 강렬한 필터링
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(1200, startTime); // 더 높은 주파수로 선명함 증가
+            filter.Q.setValueAtTime(2, startTime); // 더 날카로운 필터링
+            
+            // 약간의 디스토션 추가 (박진감 UP)
+            const curve = new Float32Array(65536);
+            for (let i = 0; i < 65536; i++) {
+                const x = (i - 32768) / 32768;
+                curve[i] = Math.tanh(x * 2) * 0.8; // 살짝의 디스토션
+            }
+            distortion.curve = curve;
+            
+            // 더 강렬한 어택
+            gainNode.gain.setValueAtTime(0, startTime);
+            gainNode.gain.linearRampToValueAtTime(volume, startTime + 0.02); // 더 빠른 어택
+            gainNode.gain.linearRampToValueAtTime(volume * 0.8, startTime + duration - 0.05);
+            gainNode.gain.linearRampToValueAtTime(0, startTime + duration);
+            
+            oscillator.start(startTime);
+            oscillator.stop(startTime + duration);
+            
+            bgmOscillators.push(oscillator);
+        }
+
+        function startBGM() {
+            if (!isSoundEnabled || !audioContext || isBgmPlaying) return;
+            
+            isBgmPlaying = true;
+            
+            // BGM 전용 게인 노드 생성
+            if (bgmGainNode) {
+                bgmGainNode.disconnect();
+            }
+            bgmGainNode = audioContext.createGain();
+            bgmGainNode.gain.setValueAtTime(0.3, audioContext.currentTime); // BGM 볼륨
+            bgmGainNode.connect(audioContext.destination);
+            
+            playBGMSequence();
+        }
+
+        function playBGMSequence() {
+            if (!isBgmPlaying) return;
+            
+            const startTime = audioContext.currentTime;
+            let currentTime = startTime;
+            
+            // 메인 멜로디 재생 (더 큰 볼륨)
+            bgmMelody.forEach((note, index) => {
+                playBGMNote(note.note, currentTime, note.duration, 0.035, 'square');
+                currentTime += note.duration;
+            });
+            
+            // 베이스 라인 재생 (더 강력하게)
+            let bassTime = startTime;
+            bgmBass.forEach((note, index) => {
+                playBGMNote(note.note * 0.5, bassTime, note.duration, 0.06, 'sawtooth'); // 한 옥타브 낮게, 더 큰 볼륨
+                bassTime += note.duration;
+            });
+            
+            // 킥 드럼 패턴 추가 (박진감 UP)
+            for (let i = 0; i < 8; i++) {
+                const kickTime = startTime + i * 1; // 1초마다
+                playKickDrum(kickTime);
+            }
+            
+            // 하이햇 패턴 추가 (16비트)
+            for (let i = 0; i < 32; i++) {
+                const hihatTime = startTime + i * 0.25; // 0.25초마다
+                if (i % 2 === 1) { // 오프비트에만
+                    playHiHat(hihatTime);
+                }
+            }
+            
+            // 강화된 하모니 (더 복잡한 코드 진행)
+            const chordProgression = [
+                [notes.C4, notes.E4, notes.G4], // C major
+                [notes.A4, notes.C5, notes.E5], // A minor
+                [notes.F4, notes.A4, notes.C5], // F major
+                [notes.G4, notes.B4, notes.D5]  // G major
+            ];
+            
+            chordProgression.forEach((chord, chordIndex) => {
+                const chordTime = startTime + chordIndex * 2;
+                chord.forEach((freq, noteIndex) => {
+                    playBGMNote(freq, chordTime, 1.8, 0.02, 'triangle');
+                });
+            });
+            
+            // 전체 시퀀스 길이 계산 (8초)
+            const sequenceLength = 8;
+            
+            // 다음 루프 예약
+            bgmTimeoutId = setTimeout(() => {
+                if (isBgmPlaying) {
+                    playBGMSequence();
+                }
+            }, sequenceLength * 1000);
+        }
+
+        // 킥 드럼 사운드
+        function playKickDrum(startTime) {
+            if (!isSoundEnabled || !audioContext || !isBgmPlaying) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            const filter = audioContext.createBiquadFilter();
+            
+            oscillator.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(bgmGainNode);
+            
+            oscillator.frequency.setValueAtTime(60, startTime); // 낮은 주파수
+            oscillator.frequency.exponentialRampToValueAtTime(30, startTime + 0.1);
+            
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(200, startTime);
+            
+            gainNode.gain.setValueAtTime(0.08, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.15);
+            
+            oscillator.start(startTime);
+            oscillator.stop(startTime + 0.15);
+            
+            bgmOscillators.push(oscillator);
+        }
+
+        // 하이햇 사운드
+        function playHiHat(startTime) {
+            if (!isSoundEnabled || !audioContext || !isBgmPlaying) return;
+            
+            // 노이즈 생성
+            const bufferSize = audioContext.sampleRate * 0.05;
+            const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = buffer.getChannelData(0);
+            
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = (Math.random() * 2 - 1) * 0.3;
+            }
+            
+            const source = audioContext.createBufferSource();
+            const gainNode = audioContext.createGain();
+            const filter = audioContext.createBiquadFilter();
+            
+            source.buffer = buffer;
+            source.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(bgmGainNode);
+            
+            filter.type = 'highpass';
+            filter.frequency.setValueAtTime(8000, startTime);
+            
+            gainNode.gain.setValueAtTime(0.02, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + 0.05);
+            
+            source.start(startTime);
+        }
+
+        function stopBGM() {
+            isBgmPlaying = false;
+            
+            if (bgmTimeoutId) {
+                clearTimeout(bgmTimeoutId);
+                bgmTimeoutId = null;
+            }
+            
+            // 모든 BGM 오실레이터 정리
+            bgmOscillators.forEach(osc => {
+                try {
+                    osc.stop();
+                } catch (e) {
+                    // 이미 정지된 오실레이터 무시
+                }
+            });
+            bgmOscillators = [];
+            
+            if (bgmGainNode) {
+                bgmGainNode.disconnect();
+                bgmGainNode = null;
+            }
+        }
+
+        function toggleBGM() {
+            if (isBgmPlaying) {
+                stopBGM();
+                console.log('🎵 BGM 정지');
+            } else {
+                startBGM();
+                console.log('🎵 BGM 시작');
+            }
+        }
+
         // 캔버스 설정
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
@@ -266,6 +572,9 @@
                 initAudio();
             }
             
+            // BGM 시작
+            startBGM();
+            
             console.log('🎮 게임 시작!');
         }
 
@@ -279,6 +588,11 @@
             explosionParticles = [];
             gameField = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
             gameFrame = 0;
+            
+            // BGM 다시 시작
+            stopBGM();
+            startBGM();
+            
             console.log('🔄 게임 재시작!');
         }
 
@@ -327,6 +641,19 @@
             if (e.key === 'm' || e.key === 'M') {
                 isSoundEnabled = !isSoundEnabled;
                 console.log('🔊 사운드:', isSoundEnabled ? '켜짐' : '꺼짐');
+                
+                // 사운드 꺼지면 BGM도 정지
+                if (!isSoundEnabled) {
+                    stopBGM();
+                } else if (gameState === 'playing') {
+                    // 사운드 켜지고 게임 중이면 BGM 시작
+                    startBGM();
+                }
+            }
+            
+            // BGM 토글 (B키)
+            if (e.key === 'b' || e.key === 'B') {
+                toggleBGM();
             }
         });
 
@@ -623,9 +950,8 @@
             score += totalScore;
             console.log('🎯 점수 획득!', `면적: ${rectangleArea}`, `총알: ${bulletCount}개`, `점수: +${totalScore}`, `총점: ${score}`);
             
-            // 사운드 재생
+            // 사운드 재생 (폭발음만)
             playExplosionSound();
-            playScoreSound();
             
             // 폭발 파티클 생성
             for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
@@ -1060,6 +1386,7 @@
                             const blockY = enemy.y + row;
                             if (blockY >= gameOverLineY) {
                                 console.log('💀 게임 오버! 적군이 라인에 닿음:', blockY, '>=', gameOverLineY);
+                                stopBGM(); // BGM 정지
                                 playGameOverSound(); // 게임 오버 사운드 재생
                                 updateHighScore();
                                 isGameOver = true;
@@ -1075,6 +1402,7 @@
                     const bulletY = enemy.y + attachedBullet.relativeY;
                     if (bulletY >= gameOverLineY) {
                         console.log('💀 게임 오버! 붙은 총알이 라인에 닿음:', bulletY, '>=', gameOverLineY);
+                        stopBGM(); // BGM 정지
                         playGameOverSound(); // 게임 오버 사운드 재생
                         updateHighScore();
                         isGameOver = true;
@@ -1089,6 +1417,7 @@
                 for (let x = 0; x < COLS; x++) {
                     if (gameField[y][x] === 1 && y >= gameOverLineY) {
                         console.log('💀 게임 오버! 고정된 핑크 블록이 라인에 닿음:', y, '>=', gameOverLineY);
+                        stopBGM(); // BGM 정지
                         playGameOverSound(); // 게임 오버 사운드 재생
                         updateHighScore();
                         isGameOver = true;
@@ -1315,16 +1644,21 @@
             ctx.fillText('← → : 이동', canvas.width / 2, canvas.height / 2 + 40);
             ctx.fillText('스페이스 : 발사', canvas.width / 2, canvas.height / 2 + 65);
             ctx.fillText('M : 사운드 온/오프', canvas.width / 2, canvas.height / 2 + 90);
+            ctx.fillText('B : BGM 온/오프', canvas.width / 2, canvas.height / 2 + 115);
             
             // 사운드 상태 표시
             ctx.fillStyle = isSoundEnabled ? '#00ff00' : '#ff0000';
-            ctx.fillText(`사운드: ${isSoundEnabled ? 'ON' : 'OFF'}`, canvas.width / 2, canvas.height / 2 + 115);
+            ctx.fillText(`사운드: ${isSoundEnabled ? 'ON' : 'OFF'}`, canvas.width / 2, canvas.height / 2 + 140);
+            
+            // BGM 상태 표시
+            ctx.fillStyle = isBgmPlaying ? '#00ff00' : '#ff0000';
+            ctx.fillText(`BGM: ${isBgmPlaying ? 'ON' : 'OFF'}`, canvas.width / 2, canvas.height / 2 + 165);
             
             // 최고 점수 표시
             if (highScore > 0) {
                 ctx.fillStyle = '#ffff00';
                 ctx.font = '18px Arial';
-                ctx.fillText(`최고 점수: ${highScore}`, canvas.width / 2, canvas.height / 2 + 140);
+                ctx.fillText(`최고 점수: ${highScore}`, canvas.width / 2, canvas.height / 2 + 190);
             }
             
             // 시작 버튼 (깜빡이는 효과)
@@ -1332,7 +1666,7 @@
             if (blinkTime === 0) {
                 ctx.fillStyle = '#ffff00';
                 ctx.font = 'bold 24px Arial';
-                ctx.fillText('스페이스바를 눌러 시작!', canvas.width / 2, canvas.height / 2 + 170);
+                ctx.fillText('스페이스바를 눌러 시작!', canvas.width / 2, canvas.height / 2 + 220);
             }
             
             // 텍스트 정렬 원상복구
