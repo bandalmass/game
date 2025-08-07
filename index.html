@@ -45,6 +45,153 @@
     <script>
         console.log('🎮 게임 시작');
 
+        // 사운드 시스템 초기화
+        let audioContext;
+        let isSoundEnabled = true;
+
+        // Web Audio API 초기화
+        function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('🔊 오디오 시스템 초기화 완료');
+            } catch (error) {
+                console.warn('오디오 지원되지 않음:', error);
+                isSoundEnabled = false;
+            }
+        }
+
+        // 사운드 생성 함수들
+        function playShootSound() {
+            if (!isSoundEnabled || !audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+
+        function playExplosionSound() {
+            if (!isSoundEnabled || !audioContext) return;
+            
+            // 폭발음 - 노이즈 기반
+            const bufferSize = audioContext.sampleRate * 0.3;
+            const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = buffer.getChannelData(0);
+            
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+            }
+            
+            const source = audioContext.createBufferSource();
+            const gainNode = audioContext.createGain();
+            const filter = audioContext.createBiquadFilter();
+            
+            source.buffer = buffer;
+            source.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(800, audioContext.currentTime);
+            filter.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.3);
+            
+            gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            
+            source.start();
+        }
+
+        function playHitSound() {
+            if (!isSoundEnabled || !audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.05);
+            
+            gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.05);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.05);
+        }
+
+        function playGameOverSound() {
+            if (!isSoundEnabled || !audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 1.0);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.0);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 1.0);
+        }
+
+        function playScoreSound() {
+            if (!isSoundEnabled || !audioContext) return;
+            
+            // 점수 획득음 - 상승하는 음계
+            const frequencies = [523, 659, 784]; // C, E, G
+            
+            frequencies.forEach((freq, index) => {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(freq, audioContext.currentTime + index * 0.1);
+                
+                gainNode.gain.setValueAtTime(0, audioContext.currentTime + index * 0.1);
+                gainNode.gain.linearRampToValueAtTime(0.05, audioContext.currentTime + index * 0.1 + 0.01);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + index * 0.1 + 0.15);
+                
+                oscillator.start(audioContext.currentTime + index * 0.1);
+                oscillator.stop(audioContext.currentTime + index * 0.1 + 0.15);
+            });
+        }
+
+        function playLandingSound() {
+            if (!isSoundEnabled || !audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(120, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(80, audioContext.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.06, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+        }
+
         // 캔버스 설정
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
@@ -113,6 +260,12 @@
             explosionParticles = [];
             gameField = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
             gameFrame = 0;
+            
+            // 오디오 초기화 (사용자 상호작용 후에만 가능)
+            if (!audioContext) {
+                initAudio();
+            }
+            
             console.log('🎮 게임 시작!');
         }
 
@@ -169,6 +322,12 @@
                 debugGameField();
                 checkIndividualEnemyRectangles(); // 강제로 개별 적군 사각형 체크 실행
             }
+            
+            // 사운드 토글 (M키)
+            if (e.key === 'm' || e.key === 'M') {
+                isSoundEnabled = !isSoundEnabled;
+                console.log('🔊 사운드:', isSoundEnabled ? '켜짐' : '꺼짐');
+            }
         });
 
         document.addEventListener('keyup', (e) => {
@@ -190,6 +349,7 @@
                 speed: 1
             };
             bullets.push(bullet);
+            playShootSound(); // 발사 사운드 재생
             console.log('💥 총알 발사! 위치:', bullet.x, bullet.y);
         }
 
@@ -463,6 +623,10 @@
             score += totalScore;
             console.log('🎯 점수 획득!', `면적: ${rectangleArea}`, `총알: ${bulletCount}개`, `점수: +${totalScore}`, `총점: ${score}`);
             
+            // 사운드 재생
+            playExplosionSound();
+            playScoreSound();
+            
             // 폭발 파티클 생성
             for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
                 for (let x = rectangle.x; x < rectangle.x + rectangle.width; x++) {
@@ -619,6 +783,7 @@
                                             relativeX: relativeX,
                                             relativeY: relativeY
                                         });
+                                        playHitSound(); // 충돌 사운드 재생
                                         console.log('💥 충돌! 총알이 적 블록 아래에 붙음:', relativeX, relativeY);
                                         
                                         // 총알이 붙은 즉시 개별 적군 사각형 체크
@@ -667,6 +832,7 @@
                                         relativeX: newRelativeX,
                                         relativeY: newRelativeY
                                     });
+                                    playHitSound(); // 충돌 사운드 재생
                                     console.log('💥 충돌! 총알이 붙은 총알 아래에 붙음:', newRelativeX, newRelativeY);
                                     
                                     // 총알이 붙은 즉시 개별 적군 사각형 체크
@@ -894,6 +1060,7 @@
                             const blockY = enemy.y + row;
                             if (blockY >= gameOverLineY) {
                                 console.log('💀 게임 오버! 적군이 라인에 닿음:', blockY, '>=', gameOverLineY);
+                                playGameOverSound(); // 게임 오버 사운드 재생
                                 updateHighScore();
                                 isGameOver = true;
                                 gameState = 'gameOver';
@@ -908,6 +1075,7 @@
                     const bulletY = enemy.y + attachedBullet.relativeY;
                     if (bulletY >= gameOverLineY) {
                         console.log('💀 게임 오버! 붙은 총알이 라인에 닿음:', bulletY, '>=', gameOverLineY);
+                        playGameOverSound(); // 게임 오버 사운드 재생
                         updateHighScore();
                         isGameOver = true;
                         gameState = 'gameOver';
@@ -921,6 +1089,7 @@
                 for (let x = 0; x < COLS; x++) {
                     if (gameField[y][x] === 1 && y >= gameOverLineY) {
                         console.log('💀 게임 오버! 고정된 핑크 블록이 라인에 닿음:', y, '>=', gameOverLineY);
+                        playGameOverSound(); // 게임 오버 사운드 재생
                         updateHighScore();
                         isGameOver = true;
                         gameState = 'gameOver';
@@ -980,6 +1149,7 @@
                     });
 
                     enemies.splice(enemyIndex, 1);
+                    playLandingSound(); // 착지 사운드 재생
                     console.log('🔻 핑크색 블록이 착지하여 고정됨 (붙은 총알:', enemy.attachedBullets.length, '개)');
                 }
             }
@@ -1144,12 +1314,17 @@
             ctx.fillStyle = '#cccccc';
             ctx.fillText('← → : 이동', canvas.width / 2, canvas.height / 2 + 40);
             ctx.fillText('스페이스 : 발사', canvas.width / 2, canvas.height / 2 + 65);
+            ctx.fillText('M : 사운드 온/오프', canvas.width / 2, canvas.height / 2 + 90);
+            
+            // 사운드 상태 표시
+            ctx.fillStyle = isSoundEnabled ? '#00ff00' : '#ff0000';
+            ctx.fillText(`사운드: ${isSoundEnabled ? 'ON' : 'OFF'}`, canvas.width / 2, canvas.height / 2 + 115);
             
             // 최고 점수 표시
             if (highScore > 0) {
                 ctx.fillStyle = '#ffff00';
                 ctx.font = '18px Arial';
-                ctx.fillText(`최고 점수: ${highScore}`, canvas.width / 2, canvas.height / 2 + 90);
+                ctx.fillText(`최고 점수: ${highScore}`, canvas.width / 2, canvas.height / 2 + 140);
             }
             
             // 시작 버튼 (깜빡이는 효과)
@@ -1157,7 +1332,7 @@
             if (blinkTime === 0) {
                 ctx.fillStyle = '#ffff00';
                 ctx.font = 'bold 24px Arial';
-                ctx.fillText('스페이스바를 눌러 시작!', canvas.width / 2, canvas.height / 2 + 120);
+                ctx.fillText('스페이스바를 눌러 시작!', canvas.width / 2, canvas.height / 2 + 170);
             }
             
             // 텍스트 정렬 원상복구
