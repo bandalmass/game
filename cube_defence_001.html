@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>슈팅 게임</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: white;
+            font-family: monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .game-container {
+            position: relative;
+            border: 2px solid #333;
+        }
+
+        #gameCanvas {
+            display: block;
+            background: #000;
+            cursor: none;
+        }
+
+        .info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="600" height="800"></canvas>
+    </div>
+
+    <script>
+        console.log('🎮 게임 시작');
+
+        // 캔버스 설정
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+            console.error('캔버스 컨텍스트를 가져올 수 없습니다');
+            alert('브라우저가 Canvas를 지원하지 않습니다');
+        }
+        
+        // 게임 설정
+        const GRID = 20;
+        const COLS = Math.floor(canvas.width / GRID);
+        const ROWS = Math.floor(canvas.height / GRID);
+
+        console.log(`게임 필드: ${COLS} x ${ROWS}`);
+
+        // 플레이어 (초록색 'ㅜ' 모양)
+        const player = {
+            x: Math.floor(COLS / 2) - 1,
+            y: ROWS - 2,
+            width: 3,
+            height: 2
+        };
+
+        // 게임 요소들
+        let bullets = [];
+        let enemies = [];
+        let gameField = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
+        // 0: 빈공간, 1: 핑크색 블록, 2: 노란색 블록
+        
+        // 폭발 파티클 배열
+        let explosionParticles = [];
+
+        // 점수 시스템
+        let score = 0;
+        let highScore = localStorage.getItem('rectangleDefenseHighScore') || 0;
+
+        // 게임 상태 시스템
+        let gameState = 'start'; // 'start', 'playing', 'gameOver'
+        let isGameOver = false;
+        const gameOverLineY = player.y - 1; // 캐릭터 한 블록 위에 라인
+
+        // 키보드 상태
+        const keys = {};
+        const keyPressed = {}; // 키가 처음 눌렸는지 추적
+        let leftMoveCounter = 0;
+        let rightMoveCounter = 0;
+        const MOVE_DELAY = 6; // 한 번 클릭에 두 칸 이동 방지를 위한 적당한 지연
+
+        // 최고 점수 업데이트 함수
+        function updateHighScore() {
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('rectangleDefenseHighScore', highScore);
+                console.log('🏆 신기록!', highScore, '점');
+            }
+        }
+
+        // 게임 시작 함수
+        function startGame() {
+            gameState = 'playing';
+            isGameOver = false;
+            score = 0;
+            bullets = [];
+            enemies = [];
+            explosionParticles = [];
+            gameField = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
+            gameFrame = 0;
+            console.log('🎮 게임 시작!');
+        }
+
+        // 게임 재시작 함수
+        function restartGame() {
+            gameState = 'playing';
+            isGameOver = false;
+            score = 0;
+            bullets = [];
+            enemies = [];
+            explosionParticles = [];
+            gameField = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
+            gameFrame = 0;
+            console.log('🔄 게임 재시작!');
+        }
+
+        // 이벤트 리스너
+        document.addEventListener('keydown', (e) => {
+            // 시작 화면에서 스페이스바로 게임 시작
+            if (gameState === 'start' && e.key === ' ') {
+                startGame();
+                e.preventDefault();
+                return;
+            }
+            
+            // 게임 오버 상태에서 R키로 재시작
+            if (isGameOver && (e.key === 'r' || e.key === 'R')) {
+                restartGame();
+                return;
+            }
+            
+            // 게임 플레이 중이 아니면 다른 키 입력 무시
+            if (gameState !== 'playing' || isGameOver) return;
+            
+            keys[e.key] = true;
+            
+            // 처음 눌렸을 때만 keyPressed 설정
+            if (!keyPressed[e.key]) {
+                keyPressed[e.key] = true;
+                console.log('🔑 키 눌림:', e.key);
+            }
+            
+            if (e.key === ' ' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || 
+                e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+            }
+
+            if (e.key === ' ') {
+                shoot();
+            }
+            
+            // 디버그 키 (D키로 게임 필드 상태 확인)
+            if (e.key === 'd' || e.key === 'D') {
+                debugGameField();
+                checkIndividualEnemyRectangles(); // 강제로 개별 적군 사각형 체크 실행
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+            keyPressed[e.key] = false;
+            
+            if (e.key === ' ' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || 
+                e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+            }
+        });
+
+        // 총알 발사
+        function shoot() {
+            const bullet = {
+                x: player.x + 1, // 중앙에서 발사
+                y: player.y - 1,
+                prevY: player.y - 1, // 이전 위치 초기화
+                speed: 1
+            };
+            bullets.push(bullet);
+            console.log('💥 총알 발사! 위치:', bullet.x, bullet.y);
+        }
+
+        // 플레이어 업데이트
+        function updatePlayer() {
+            // 왼쪽 이동 처리
+            if (keys['ArrowLeft']) {
+                leftMoveCounter++;
+                
+                // 처음 누르면 즉시 이동, 이후 지연 간격으로 이동
+                if (leftMoveCounter === 1 && player.x > 0) {
+                    // 첫 번째 입력: 즉시 이동
+                    player.x--;
+                    console.log('← 왼쪽 이동 (즉시):', player.x);
+                } else if (leftMoveCounter >= MOVE_DELAY && player.x > 0) {
+                    // 연속 입력: 지연 후 이동
+                    player.x--;
+                    console.log('← 왼쪽 이동 (연속):', player.x);
+                    leftMoveCounter = 1; // 1로 리셋 (0이 아닌 1로 해서 즉시 이동 방지)
+                }
+            } else {
+                leftMoveCounter = 0; // 키를 떼면 즉시 리셋
+            }
+            
+            // 오른쪽 이동 처리
+            if (keys['ArrowRight']) {
+                rightMoveCounter++;
+                
+                // 처음 누르면 즉시 이동, 이후 지연 간격으로 이동
+                if (rightMoveCounter === 1 && player.x < COLS - player.width) {
+                    // 첫 번째 입력: 즉시 이동
+                    player.x++;
+                    console.log('→ 오른쪽 이동 (즉시):', player.x);
+                } else if (rightMoveCounter >= MOVE_DELAY && player.x < COLS - player.width) {
+                    // 연속 입력: 지연 후 이동
+                    player.x++;
+                    console.log('→ 오른쪽 이동 (연속):', player.x);
+                    rightMoveCounter = 1; // 1로 리셋 (0이 아닌 1로 해서 즉시 이동 방지)
+                }
+            } else {
+                rightMoveCounter = 0; // 키를 떼면 즉시 리셋
+            }
+        }
+
+        // 총알 업데이트
+        function updateBullets() {
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                
+                // 이전 위치 저장 (충돌 감지용)
+                bullet.prevY = bullet.y;
+                bullet.y -= bullet.speed;
+                
+                // 화면 위로 나가면 제거
+                if (bullet.y < 0) {
+                    bullets.splice(i, 1);
+                }
+            }
+        }
+
+        // 사각형을 완성할 수 있는 적군 도형들만 (아래에서 총알로 쉽게 채울 수 있는 형태)
+        const enemyShapes = [
+            // 완전한 사각형들
+            [[1]],                              // 1x1
+            [[1, 1]],                           // 2x1 가로
+            [[1], [1]],                         // 2x1 세로
+            [[1, 1, 1]],                        // 3x1 가로
+            [[1], [1], [1]],                    // 3x1 세로
+            [[1, 1], [1, 1]],                   // 2x2 정사각형
+            [[1, 1, 1], [1, 1, 1]],             // 3x2 직사각형
+            [[1, 1], [1, 1], [1, 1]],           // 2x3 직사각형
+            [[1, 1, 1, 1]],                     // 4x1 가로
+            [[1], [1], [1], [1]],               // 4x1 세로
+            
+            // 아래에 구멍이 있어서 총알로 사각형 완성 가능 (ㄷ자 형태만)
+            [[1, 1, 1], [1, 0, 1]],             // 위가 막힌 ㄷ자 (총알 1개로 2x3 완성)
+            [[1, 1, 1, 1], [1, 0, 0, 1]],       // 긴 ㄷ자 (총알 2개로 2x4 완성)
+            
+            // 가운데 구멍이 있어서 총알로 사각형 완성 가능 (아래쪽 구멍만)
+            [[1, 1, 1], [0, 1, 0]],             // 뒤집힌 T자 (총알 2개로 2x3 완성) 
+            [[1, 1, 1, 1], [0, 1, 1, 0]],       // 큰 뒤집힌 T자 (총알 2개로 2x4 완성)
+        ];
+
+        // 단순한 적군 생성 함수
+        function spawnEnemy() {
+            const shape = enemyShapes[Math.floor(Math.random() * enemyShapes.length)];
+            const shapeWidth = Math.max(...shape.map(row => row.length));
+            const MARGIN = 1;
+            const minX = MARGIN;
+            const maxX = COLS - shapeWidth - MARGIN;
+            
+            if (maxX < minX) {
+                // 화면에 맞지 않으면 단일 블록으로
+                const smallShape = [[1]];
+                const x = Math.floor(COLS / 2);
+                
+                const enemy = {
+                    x: x,
+                    y: -smallShape.length,
+                    shape: smallShape,
+                    speed: 0.03,
+                    fallCounter: 0,
+                    attachedBullets: []
+                };
+                
+                enemies.push(enemy);
+                console.log('📦 단일 블록 생성 (화면 크기 제한)');
+                return;
+            }
+            
+            const x = Math.floor(Math.random() * (maxX - minX + 1)) + minX;
+            
+            const enemy = {
+                x: x,
+                y: -shape.length,
+                shape: shape,
+                speed: 0.03,
+                fallCounter: 0,
+                attachedBullets: []
+            };
+            
+            enemies.push(enemy);
+            console.log('📦 적군 생성!', `${shapeWidth}x${shape.length}`, '위치:', x);
+        }
+
+        // 적 업데이트
+        function updateEnemies() {
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                enemy.fallCounter += enemy.speed;
+                if (enemy.fallCounter >= 1) {
+                    // 이전 위치 저장 (충돌 감지용)
+                    enemy.prevY = enemy.y;
+                    enemy.y++;
+                    enemy.fallCounter = 0;
+                }
+                
+                // 화면 아래로 나가면 제거
+                if (enemy.y > ROWS + 3) {
+                    enemies.splice(i, 1);
+                }
+            }
+        }
+
+        // 개별 적군과 붙은 총알들만으로 사각형 체크
+        function checkIndividualEnemyRectangles() {
+            let explosionOccurred = false;
+            
+            // 각 적군에 대해 개별적으로 사각형 체크
+            for (let enemyIndex = enemies.length - 1; enemyIndex >= 0; enemyIndex--) {
+                const enemy = enemies[enemyIndex];
+                
+                // 완전한 사각형 찾기
+                const rectangle = findEnemyRectangle(enemy);
+                if (rectangle) {
+                    console.log('💥 완전한 사각형 폭발!', `${rectangle.width}x${rectangle.height}`, `적군 인덱스: ${enemyIndex}`);
+                    explodeIndividualEnemy(enemyIndex, rectangle);
+                    explosionOccurred = true;
+                    break; // 한 번에 하나씩만 폭발
+                }
+            }
+            
+            return explosionOccurred;
+        }
+        
+
+
+        // 개별 적군과 붙은 총알들이 사각형을 이루는지 확인
+        function findEnemyRectangle(enemy) {
+            // 적군의 모든 블록 위치 수집
+            const enemyBlocks = [];
+            for (let row = 0; row < enemy.shape.length; row++) {
+                for (let col = 0; col < enemy.shape[row].length; col++) {
+                    if (enemy.shape[row][col] === 1) {
+                        enemyBlocks.push({
+                            x: enemy.x + col,
+                            y: enemy.y + row
+                        });
+                    }
+                }
+            }
+            
+            // 붙은 총알 위치 수집
+            const bulletBlocks = enemy.attachedBullets.map(bullet => ({
+                x: enemy.x + bullet.relativeX,
+                y: enemy.y + bullet.relativeY
+            }));
+            
+            // 전체 블록 위치 (적군 + 총알)
+            const allBlocks = [...enemyBlocks, ...bulletBlocks];
+            
+            console.log('🔍 사각형 체크:', '적군 블록:', enemyBlocks.length, '총알 블록:', bulletBlocks.length, '총 블록:', allBlocks.length);
+            
+            // 최소 블록 수 체크를 완화 (1개 블록도 가능)
+            if (allBlocks.length < 1) return null; // 최소 1개 블록 필요
+            
+            // 경계 박스 계산
+            const minX = Math.min(...allBlocks.map(block => block.x));
+            const maxX = Math.max(...allBlocks.map(block => block.x));
+            const minY = Math.min(...allBlocks.map(block => block.y));
+            const maxY = Math.max(...allBlocks.map(block => block.y));
+            
+            const width = maxX - minX + 1;
+            const height = maxY - minY + 1;
+            
+            console.log('📐 경계 박스:', `${width}x${height}`, `위치: (${minX}, ${minY})`);
+            
+            // 면적이 최소 1 이상이어야 함 (1x1, 1x2, 2x1, 2x2 등)
+            if (width * height < 1) return null;
+            
+            // 1x1도 허용 (단일 블록도 제거 가능)
+            // if (width === 1 && height === 1) return null;
+            
+            // 폭발 조건 확인
+            const area = width * height;
+            const blockCount = allBlocks.length;
+            
+            console.log('🎯 폭발 조건 체크:', '면적:', area, '블록 수:', blockCount, '적군:', enemyBlocks.length, '총알:', bulletBlocks.length);
+            
+            // 특별 조건: 적군에 총알이 붙으면 폭발 (1개 블록부터 가능)
+            if (bulletBlocks.length > 0) {
+                // 면적이 1 이상이고 완전히 채워진 직사각형이면 폭발
+                if (area >= 1 && blockCount === area) {
+                    console.log('✅ 직사각형 조건 만족: 면적', area, '= 블록 수', blockCount);
+                    // 추가 조건 없이 폭발
+                } else {
+                    console.log('❌ 직사각형 조건 불만족: 면적', area, '≠ 블록 수', blockCount);
+                    return null;
+                }
+            } else {
+                // 총알이 없으면 적군만으로는 폭발하지 않음 (원래 규칙)
+                console.log('❌ 총알이 없어서 폭발하지 않음');
+                return null;
+            }
+            
+            // 경계 박스 내의 모든 칸이 블록으로 채워져 있는지 확인
+            for (let y = minY; y <= maxY; y++) {
+                for (let x = minX; x <= maxX; x++) {
+                    const hasBlock = allBlocks.some(block => block.x === x && block.y === y);
+                    if (!hasBlock) {
+                        console.log('❌ 빈 칸 발견:', `(${x}, ${y})`);
+                        return null; // 빈 칸이 있으면 사각형이 아님
+                    }
+                }
+            }
+            
+            console.log('✅ 완전한 사각형 발견!', `${width}x${height}`);
+            
+            // 완전한 사각형임을 확인
+            return {
+                x: minX,
+                y: minY,
+                width: width,
+                height: height,
+                enemyBlocks: enemyBlocks,
+                bulletBlocks: bulletBlocks
+            };
+        }
+        
+
+
+        // 개별 적군 폭발 처리
+        function explodeIndividualEnemy(enemyIndex, rectangle) {
+            // 점수 계산: 사각형 면적 = 총알 크기로 계산
+            const rectangleArea = rectangle.width * rectangle.height;
+            const bulletCount = rectangle.bulletBlocks.length;
+            const totalScore = rectangleArea; // 총알 사이즈 = 1점이므로 면적이 곧 점수
+            
+            // 점수 누적
+            score += totalScore;
+            console.log('🎯 점수 획득!', `면적: ${rectangleArea}`, `총알: ${bulletCount}개`, `점수: +${totalScore}`, `총점: ${score}`);
+            
+            // 폭발 파티클 생성
+            for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
+                for (let x = rectangle.x; x < rectangle.x + rectangle.width; x++) {
+                    for (let i = 0; i < 4; i++) {
+                        explosionParticles.push({
+                            x: (x + Math.random()) * GRID,
+                            y: (y + Math.random()) * GRID,
+                            vx: (Math.random() - 0.5) * 6,
+                            vy: (Math.random() - 0.5) * 6 - 2,
+                            life: 30,
+                            maxLife: 30,
+                            size: 2 + Math.random() * 3
+                        });
+                    }
+                }
+            }
+            
+            // 해당 적군 완전 제거
+            enemies.splice(enemyIndex, 1);
+            
+            // 고정된 블록들 중 폭발 영역에 있는 것들 제거
+            for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
+                for (let x = rectangle.x; x < rectangle.x + rectangle.width; x++) {
+                    if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+                        // 해당 위치가 방금 폭발한 적군의 일부였다면 제거
+                        const wasEnemyBlock = rectangle.enemyBlocks.some(block => block.x === x && block.y === y);
+                        const wasBulletBlock = rectangle.bulletBlocks.some(block => block.x === x && block.y === y);
+                        
+                        if (wasEnemyBlock || wasBulletBlock) {
+                            // 게임 필드에 고정된 블록은 제거하지 않음 (떨어지는 중인 적군만 제거)
+                            // gameField[y][x] = 0;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 임시 사각형 폭발 처리 (떨어지는 적들과 붙은 총알들 처리)
+        function explodeTemporaryRectangle(rectangle) {
+            // 폭발 파티클 생성
+            for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
+                for (let x = rectangle.x; x < rectangle.x + rectangle.width; x++) {
+                    for (let i = 0; i < 4; i++) {
+                        explosionParticles.push({
+                            x: (x + Math.random()) * GRID,
+                            y: (y + Math.random()) * GRID,
+                            vx: (Math.random() - 0.5) * 6,
+                            vy: (Math.random() - 0.5) * 6 - 2,
+                            life: 30,
+                            maxLife: 30,
+                            size: 2 + Math.random() * 3
+                        });
+                    }
+                }
+            }
+            
+            // 폭발 영역에 해당하는 떨어지는 적들과 붙은 총알들 제거
+            for (let enemyIndex = enemies.length - 1; enemyIndex >= 0; enemyIndex--) {
+                const enemy = enemies[enemyIndex];
+                let enemyInExplosion = false;
+                
+                // 적 블록이 폭발 영역에 있는지 확인
+                for (let row = 0; row < enemy.shape.length; row++) {
+                    for (let col = 0; col < enemy.shape[row].length; col++) {
+                        if (enemy.shape[row][col] === 1) {
+                            const x = enemy.x + col;
+                            const y = enemy.y + row;
+                            if (x >= rectangle.x && x < rectangle.x + rectangle.width &&
+                                y >= rectangle.y && y < rectangle.y + rectangle.height) {
+                                enemy.shape[row][col] = 0; // 해당 부분 제거
+                                enemyInExplosion = true;
+                            }
+                        }
+                    }
+                }
+                
+                // 붙은 총알이 폭발 영역에 있는지 확인
+                for (let bulletIndex = enemy.attachedBullets.length - 1; bulletIndex >= 0; bulletIndex--) {
+                    const attachedBullet = enemy.attachedBullets[bulletIndex];
+                    const bulletX = enemy.x + attachedBullet.relativeX;
+                    const bulletY = enemy.y + attachedBullet.relativeY;
+                    if (bulletX >= rectangle.x && bulletX < rectangle.x + rectangle.width &&
+                        bulletY >= rectangle.y && bulletY < rectangle.y + rectangle.height) {
+                        enemy.attachedBullets.splice(bulletIndex, 1); // 붙은 총알 제거
+                        enemyInExplosion = true;
+                    }
+                }
+                
+                // 적이 완전히 비어있으면 제거
+                if (enemyInExplosion) {
+                    let enemyEmpty = true;
+                    for (let r = 0; r < enemy.shape.length; r++) {
+                        for (let c = 0; c < enemy.shape[r].length; c++) {
+                            if (enemy.shape[r][c] === 1) {
+                                enemyEmpty = false;
+                                break;
+                            }
+                        }
+                        if (!enemyEmpty) break;
+                    }
+                    
+                    if (enemyEmpty && enemy.attachedBullets.length === 0) {
+                        enemies.splice(enemyIndex, 1);
+                    }
+                }
+            }
+            
+            // 고정된 블록들도 제거
+            for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
+                for (let x = rectangle.x; x < rectangle.x + rectangle.width; x++) {
+                    if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+                        gameField[y][x] = 0;
+                    }
+                }
+            }
+        }
+
+        // 충돌 감지
+        function checkCollisions() {
+            for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
+                const bullet = bullets[bulletIndex];
+                let bulletHit = false;
+
+                // 떨어지는 적과 충돌 먼저 체크 (우선순위가 높음)
+                for (let enemyIndex = 0; enemyIndex < enemies.length; enemyIndex++) {
+                    const enemy = enemies[enemyIndex];
+
+                    // 1. 적의 핑크색 블록과 충돌 체크
+                    for (let row = 0; row < enemy.shape.length; row++) {
+                        for (let col = 0; col < enemy.shape[row].length; col++) {
+                            if (enemy.shape[row][col] === 1) {
+                                const enemyX = enemy.x + col;
+                                const enemyY = enemy.y + row;
+
+                                // 총알이 적 블록과 충돌했는지 체크 (서로 지나가는 경우도 감지)
+                                const enemyPrevY = enemy.prevY !== undefined ? enemy.prevY : enemyY;
+                                if (bullet.x === enemyX && 
+                                    (bullet.y === enemyY || 
+                                     (bullet.prevY !== undefined && 
+                                      ((bullet.prevY <= enemyY && bullet.y >= enemyPrevY) ||
+                                       (bullet.prevY >= enemyPrevY && bullet.y <= enemyY))))) {
+                                    
+                                    // 총알을 적 블록 바로 아래에 붙이기 (원래 로직)
+                                    const relativeX = col;
+                                    const relativeY = row + 1; // 적 블록 바로 아래
+                                    
+                                    // 이미 같은 위치에 붙은 총알이 없는지 확인
+                                    const alreadyAttached = enemy.attachedBullets.some(
+                                        attached => attached.relativeX === relativeX && attached.relativeY === relativeY
+                                    );
+                                    
+                                    if (!alreadyAttached) {
+                                        enemy.attachedBullets.push({
+                                            relativeX: relativeX,
+                                            relativeY: relativeY
+                                        });
+                                        console.log('💥 충돌! 총알이 적 블록 아래에 붙음:', relativeX, relativeY);
+                                        
+                                        // 총알이 붙은 즉시 개별 적군 사각형 체크
+                                        if (checkIndividualEnemyRectangles()) {
+                                            // 폭발이 발생했으므로 더 이상 처리할 필요 없음
+                                            bullets.splice(bulletIndex, 1);
+                                            return; // 충돌 감지 함수 종료
+                                        }
+                                    }
+
+                                    bullets.splice(bulletIndex, 1);
+                                    bulletHit = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (bulletHit) break;
+                    }
+
+                    // 2. 붙어있는 총알들과 충돌 체크
+                    if (!bulletHit) {
+                        for (let attachedIndex = 0; attachedIndex < enemy.attachedBullets.length; attachedIndex++) {
+                            const attachedBullet = enemy.attachedBullets[attachedIndex];
+                            const attachedX = enemy.x + attachedBullet.relativeX;
+                            const attachedY = enemy.y + attachedBullet.relativeY;
+
+                            // 총알이 붙어있는 총알과 충돌했는지 체크 (서로 지나가는 경우도 감지)
+                            const attachedPrevY = enemy.prevY !== undefined ? enemy.prevY + attachedBullet.relativeY : attachedY;
+                            if (bullet.x === attachedX && 
+                                (bullet.y === attachedY || 
+                                 (bullet.prevY !== undefined && 
+                                  ((bullet.prevY <= attachedY && bullet.y >= attachedPrevY) ||
+                                   (bullet.prevY >= attachedPrevY && bullet.y <= attachedY))))) {
+                                
+                                // 붙어있는 총알 바로 아래에 새 총알 붙이기 (원래 로직)
+                                const newRelativeX = attachedBullet.relativeX;
+                                const newRelativeY = attachedBullet.relativeY + 1; // 붙어있는 총알 바로 아래
+                                
+                                // 이미 같은 위치에 붙은 총알이 없는지 확인
+                                const alreadyAttached = enemy.attachedBullets.some(
+                                    attached => attached.relativeX === newRelativeX && attached.relativeY === newRelativeY
+                                );
+                                
+                                if (!alreadyAttached) {
+                                    enemy.attachedBullets.push({
+                                        relativeX: newRelativeX,
+                                        relativeY: newRelativeY
+                                    });
+                                    console.log('💥 충돌! 총알이 붙은 총알 아래에 붙음:', newRelativeX, newRelativeY);
+                                    
+                                    // 총알이 붙은 즉시 개별 적군 사각형 체크
+                                    if (checkIndividualEnemyRectangles()) {
+                                        // 폭발이 발생했으므로 더 이상 처리할 필요 없음
+                                        bullets.splice(bulletIndex, 1);
+                                        return; // 충돌 감지 함수 종료
+                                    }
+                                }
+
+                                bullets.splice(bulletIndex, 1);
+                                bulletHit = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (bulletHit) break;
+                }
+
+                // 떨어지는 적과 충돌하지 않은 경우에만 다른 충돌 체크
+                if (!bulletHit) {
+                    // 바닥에 닿으면 노란색 블록으로 변환
+                    if (bullet.y >= ROWS - 1) {
+                        if (bullet.x >= 0 && bullet.x < COLS) {
+                            gameField[ROWS - 1][bullet.x] = 2;
+                        }
+                        bullets.splice(bulletIndex, 1);
+                        console.log('💛 총알이 바닥에 착지');
+                        continue;
+                    }
+
+                    // 이미 쌓인 블록과 충돌
+                    if (bullet.y >= 0 && bullet.y < ROWS && bullet.x >= 0 && bullet.x < COLS) {
+                        if (gameField[bullet.y][bullet.x] !== 0) {
+                            if (bullet.y - 1 >= 0) {
+                                gameField[bullet.y - 1][bullet.x] = 2;
+                            }
+                            bullets.splice(bulletIndex, 1);
+                            console.log('💛 총알이 블록 위에 착지');
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 사각형 감지 및 폭발 시스템 (개선된 버전)
+        function checkRectangles() {
+            const toRemove = [];
+            
+            // 모든 가능한 사각형 크기를 체크 (2x2부터 시작)
+            for (let height = 2; height <= Math.min(ROWS, 5); height++) {
+                for (let width = 2; width <= Math.min(COLS, 5); width++) {
+                    for (let y = 0; y <= ROWS - height; y++) {
+                        for (let x = 0; x <= COLS - width; x++) {
+                            if (isValidRectangle(x, y, width, height)) {
+                                // 중복 제거를 위해 배열에 추가
+                                const rect = { x, y, width, height };
+                                if (!isOverlapping(rect, toRemove)) {
+                                    toRemove.push(rect);
+                                    console.log('🔍 사각형 발견!', `${width}x${height}`, `위치: (${x}, ${y})`);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 가장 큰 사각형부터 폭발 (겹치는 것 방지)
+            toRemove.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+            
+            const exploded = [];
+            for (const rect of toRemove) {
+                if (!isRectangleExploded(rect, exploded)) {
+                    explodeRectangle(rect);
+                    exploded.push(rect);
+                }
+            }
+            
+            if (toRemove.length > 0) {
+                console.log('📊 감지된 사각형 총', toRemove.length, '개, 폭발 처리:', exploded.length, '개');
+            }
+        }
+        
+        // 특정 위치와 크기가 완전한 사각형인지 확인
+        function isValidRectangle(startX, startY, width, height) {
+            // 경계 체크
+            if (startX + width > COLS || startY + height > ROWS) {
+                return false;
+            }
+            
+            // 모든 칸이 채워져 있는지 확인
+            for (let y = startY; y < startY + height; y++) {
+                for (let x = startX; x < startX + width; x++) {
+                    if (gameField[y][x] === 0) {
+                        return false;
+                    }
+                }
+            }
+            
+            return true;
+        }
+        
+        // 디버그: 게임 필드 상태 출력
+        function debugGameField() {
+            console.log('🎮 게임 필드 상태:');
+            for (let y = 0; y < ROWS; y++) {
+                let row = '';
+                for (let x = 0; x < COLS; x++) {
+                    if (gameField[y][x] === 0) row += '⬛';
+                    else if (gameField[y][x] === 1) row += '🟪';
+                    else if (gameField[y][x] === 2) row += '🟨';
+                }
+                if (row.includes('🟪') || row.includes('🟨')) {
+                    console.log(`Row ${y}: ${row}`);
+                }
+            }
+            
+            // 떨어지는 적군들 상태 출력
+            console.log('👾 떨어지는 적군들:');
+            enemies.forEach((enemy, index) => {
+                console.log(`적군 ${index}: 위치(${enemy.x}, ${enemy.y}), 붙은 총알: ${enemy.attachedBullets.length}개`);
+                console.log('적군 모양:');
+                for (let row = 0; row < enemy.shape.length; row++) {
+                    let shapeRow = '';
+                    for (let col = 0; col < enemy.shape[row].length; col++) {
+                        shapeRow += enemy.shape[row][col] === 1 ? '🟪' : '⬛';
+                    }
+                    console.log(`  ${shapeRow}`);
+                }
+                if (enemy.attachedBullets.length > 0) {
+                    console.log('붙은 총알 위치:');
+                    enemy.attachedBullets.forEach((bullet, bulletIndex) => {
+                        const absX = enemy.x + bullet.relativeX;
+                        const absY = enemy.y + bullet.relativeY;
+                        console.log(`  총알 ${bulletIndex}: 상대위치(${bullet.relativeX}, ${bullet.relativeY}) = 절대위치(${absX}, ${absY})`);
+                    });
+                }
+                console.log('---');
+            });
+        }
+        
+        // 사각형이 다른 사각형들과 겹치는지 확인
+        function isOverlapping(rect, rectList) {
+            return rectList.some(other => 
+                rect.x < other.x + other.width &&
+                rect.x + rect.width > other.x &&
+                rect.y < other.y + other.height &&
+                rect.y + rect.height > other.y
+            );
+        }
+        
+        // 사각형이 이미 폭발한 영역에 포함되는지 확인
+        function isRectangleExploded(rect, exploded) {
+            return exploded.some(other =>
+                rect.x >= other.x &&
+                rect.y >= other.y &&
+                rect.x + rect.width <= other.x + other.width &&
+                rect.y + rect.height <= other.y + other.height
+            );
+        }
+        
+        // 사각형 폭발 처리
+        function explodeRectangle(rectangle) {
+            console.log('💥 사각형 폭발!', `${rectangle.width}x${rectangle.height}`, `위치: (${rectangle.x}, ${rectangle.y})`);
+            
+            // 폭발 파티클 생성
+            for (let y = rectangle.y; y < rectangle.y + rectangle.height; y++) {
+                for (let x = rectangle.x; x < rectangle.x + rectangle.width; x++) {
+                    // 각 블록마다 여러 개의 작은 파티클 생성
+                    for (let i = 0; i < 4; i++) {
+                        explosionParticles.push({
+                            x: (x + Math.random()) * GRID,
+                            y: (y + Math.random()) * GRID,
+                            vx: (Math.random() - 0.5) * 6,
+                            vy: (Math.random() - 0.5) * 6 - 2,
+                            life: 30,
+                            maxLife: 30,
+                            size: 2 + Math.random() * 3
+                        });
+                    }
+                    
+                    // 게임 필드에서 블록 제거
+                    gameField[y][x] = 0;
+                }
+            }
+        }
+        
+        // 폭발 파티클 업데이트
+        function updateExplosionParticles() {
+            for (let i = explosionParticles.length - 1; i >= 0; i--) {
+                const particle = explosionParticles[i];
+                
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.vy += 0.2; // 중력
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    explosionParticles.splice(i, 1);
+                }
+            }
+        }
+        
+        // 폭발 파티클 그리기
+        function drawExplosionParticles() {
+            explosionParticles.forEach(particle => {
+                const alpha = particle.life / particle.maxLife;
+                ctx.fillStyle = `rgba(255, 255, 0, ${alpha})`;
+                ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            });
+        }
+
+        // 게임 오버 체크
+        function checkGameOver() {
+            if (isGameOver || gameState !== 'playing') return;
+            
+            // 떨어지는 적군들(핑크색 도형)과 붙은 총알들이 라인에 닿았는지 확인
+            for (let enemy of enemies) {
+                // 적군 블록 체크
+                for (let row = 0; row < enemy.shape.length; row++) {
+                    for (let col = 0; col < enemy.shape[row].length; col++) {
+                        if (enemy.shape[row][col] === 1) {
+                            const blockY = enemy.y + row;
+                            if (blockY >= gameOverLineY) {
+                                console.log('💀 게임 오버! 적군이 라인에 닿음:', blockY, '>=', gameOverLineY);
+                                updateHighScore();
+                                isGameOver = true;
+                                gameState = 'gameOver';
+                                return;
+                            }
+                        }
+                    }
+                }
+                
+                // 적군에 붙은 총알들 체크
+                for (let attachedBullet of enemy.attachedBullets) {
+                    const bulletY = enemy.y + attachedBullet.relativeY;
+                    if (bulletY >= gameOverLineY) {
+                        console.log('💀 게임 오버! 붙은 총알이 라인에 닿음:', bulletY, '>=', gameOverLineY);
+                        updateHighScore();
+                        isGameOver = true;
+                        gameState = 'gameOver';
+                        return;
+                    }
+                }
+            }
+            
+            // 고정된 블록들(핑크색)도 체크
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    if (gameField[y][x] === 1 && y >= gameOverLineY) {
+                        console.log('💀 게임 오버! 고정된 핑크 블록이 라인에 닿음:', y, '>=', gameOverLineY);
+                        updateHighScore();
+                        isGameOver = true;
+                        gameState = 'gameOver';
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 적 착지 체크
+        function checkEnemyLanding() {
+            for (let enemyIndex = enemies.length - 1; enemyIndex >= 0; enemyIndex--) {
+                const enemy = enemies[enemyIndex];
+                let hasLanded = false;
+
+                for (let row = 0; row < enemy.shape.length; row++) {
+                    for (let col = 0; col < enemy.shape[row].length; col++) {
+                        if (enemy.shape[row][col] === 1) {
+                            const x = enemy.x + col;
+                            const y = enemy.y + row;
+
+                            // 바운더리 체크 추가
+                            if (x >= 0 && x < COLS && y >= 0) {
+                                // 바닥에 닿았거나, 핑크색 블록(1) 위에 있을 때만 착지로 판단
+                                // 노란색 블록(2)은 총알이 붙은 것이므로 무시
+                                if (y >= ROWS - 1 || (y + 1 < ROWS && gameField[y + 1][x] === 1)) {
+                                    hasLanded = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (hasLanded) break;
+                }
+
+                if (hasLanded) {
+                    // 적을 게임 필드에 고정
+                    for (let row = 0; row < enemy.shape.length; row++) {
+                        for (let col = 0; col < enemy.shape[row].length; col++) {
+                            if (enemy.shape[row][col] === 1) {
+                                const x = enemy.x + col;
+                                const y = enemy.y + row;
+                                if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+                                    gameField[y][x] = 1; // 핑크색 블록으로 고정
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 붙은 총알들도 게임 필드에 고정
+                    enemy.attachedBullets.forEach(attachedBullet => {
+                        const bulletX = enemy.x + attachedBullet.relativeX;
+                        const bulletY = enemy.y + attachedBullet.relativeY;
+                        if (bulletY >= 0 && bulletY < ROWS && bulletX >= 0 && bulletX < COLS) {
+                            gameField[bulletY][bulletX] = 2; // 노란색 블록으로 고정
+                        }
+                    });
+
+                    enemies.splice(enemyIndex, 1);
+                    console.log('🔻 핑크색 블록이 착지하여 고정됨 (붙은 총알:', enemy.attachedBullets.length, '개)');
+                }
+            }
+        }
+
+        // 게임 필드 그리기
+        function drawGameField() {
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    if (gameField[y][x] === 1) {
+                        ctx.fillStyle = '#ff69b4'; // 핑크색
+                        ctx.fillRect(x * GRID, y * GRID, GRID, GRID);
+                    } else if (gameField[y][x] === 2) {
+                        ctx.fillStyle = '#ffff00'; // 노란색
+                        ctx.fillRect(x * GRID, y * GRID, GRID, GRID);
+                    }
+                }
+            }
+        }
+
+        // 플레이어 그리기
+        function drawPlayer() {
+            ctx.fillStyle = '#0f0';
+            // 위쪽 돌기
+            ctx.fillRect((player.x + 1) * GRID, player.y * GRID, GRID, GRID);
+            // 아래쪽 가로막대
+            ctx.fillRect(player.x * GRID, (player.y + 1) * GRID, 3 * GRID, GRID);
+        }
+
+        // 총알 그리기
+        function drawBullets() {
+            ctx.fillStyle = '#ffff00';
+            bullets.forEach(bullet => {
+                ctx.fillRect(bullet.x * GRID, bullet.y * GRID, GRID, GRID);
+            });
+        }
+
+        // 적 그리기
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                // 핑크색 적 블록 그리기
+                ctx.fillStyle = '#ff69b4';
+                for (let row = 0; row < enemy.shape.length; row++) {
+                    for (let col = 0; col < enemy.shape[row].length; col++) {
+                        if (enemy.shape[row][col] === 1) {
+                            ctx.fillRect((enemy.x + col) * GRID, (enemy.y + row) * GRID, GRID, GRID);
+                        }
+                    }
+                }
+                
+                // 붙은 총알들 그리기
+                ctx.fillStyle = '#ffff00';
+                enemy.attachedBullets.forEach(attachedBullet => {
+                    const bulletX = enemy.x + attachedBullet.relativeX;
+                    const bulletY = enemy.y + attachedBullet.relativeY;
+                    if (bulletY >= 0 && bulletY < ROWS && bulletX >= 0 && bulletX < COLS) {
+                        ctx.fillRect(bulletX * GRID, bulletY * GRID, GRID, GRID);
+                    }
+                });
+            });
+        }
+
+        // 게임 프레임 카운터
+        let gameFrame = 0;
+
+        // 게임 업데이트
+        function update() {
+            // 게임 플레이 중이 아니거나 게임 오버 상태에서는 업데이트 중단
+            if (gameState !== 'playing' || isGameOver) return;
+            
+            gameFrame++;
+            
+            updatePlayer();
+            
+            // 총알 이동 후 즉시 충돌 체크
+            updateBullets();
+            checkCollisions();
+            
+            // 적군 이동 후 다시 충돌 체크
+            updateEnemies();
+            checkCollisions();
+            
+            checkEnemyLanding();
+            
+            // 게임 오버 체크 (적군과 블록이 라인에 닿았는지 확인)
+            checkGameOver();
+            
+            // 개별 적군 사각형 감지 및 폭발
+            checkIndividualEnemyRectangles();
+            
+            // 폭발 파티클 업데이트
+            updateExplosionParticles();
+            
+            // 120프레임마다 도형 생성 (약 2초)
+            if (gameFrame % 120 === 0) {
+                spawnEnemy();
+            }
+        }
+
+        // 점수 표시 그리기
+        function drawScore() {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            
+            // 우측 상단에 현재 점수 표시 (오른쪽 여백 20px, 위쪽 여백 20px)
+            ctx.fillText(`점수: ${score}`, canvas.width - 20, 20);
+            
+            // 텍스트 정렬 원상복구
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+        }
+
+        // 최고 점수 표시 그리기
+        function drawHighScore() {
+            ctx.fillStyle = '#ffff00'; // 노란색으로 구분
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            
+            // 좌측 상단에 최고 점수 표시 (왼쪽 여백 20px, 위쪽 여백 20px)
+            ctx.fillText(`최고 점수: ${highScore}`, 20, 20);
+            
+            // 텍스트 정렬 원상복구
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+        }
+
+        // 게임 오버 라인 그리기
+        function drawGameOverLine() {
+            ctx.strokeStyle = '#ff0000'; // 빨간색 라인
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, gameOverLineY * GRID);
+            ctx.lineTo(canvas.width, gameOverLineY * GRID);
+            ctx.stroke();
+        }
+
+        // 시작 화면 그리기
+        function drawStartScreen() {
+            if (gameState !== 'start') return;
+            
+            // 검은색 배경
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 게임 제목
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 36px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('사각형 디펜스', canvas.width / 2, canvas.height / 2 - 120);
+            
+            // 게임 설명
+            ctx.font = '20px Arial';
+            ctx.fillText('총알을 발사해 사각형을 만들어', canvas.width / 2, canvas.height / 2 - 40);
+            ctx.fillText('적군을 물리치세요.', canvas.width / 2, canvas.height / 2 - 10);
+            
+            // 조작법 안내
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#cccccc';
+            ctx.fillText('← → : 이동', canvas.width / 2, canvas.height / 2 + 40);
+            ctx.fillText('스페이스 : 발사', canvas.width / 2, canvas.height / 2 + 65);
+            
+            // 최고 점수 표시
+            if (highScore > 0) {
+                ctx.fillStyle = '#ffff00';
+                ctx.font = '18px Arial';
+                ctx.fillText(`최고 점수: ${highScore}`, canvas.width / 2, canvas.height / 2 + 90);
+            }
+            
+            // 시작 버튼 (깜빡이는 효과)
+            const blinkTime = Math.floor(Date.now() / 500) % 2;
+            if (blinkTime === 0) {
+                ctx.fillStyle = '#ffff00';
+                ctx.font = 'bold 24px Arial';
+                ctx.fillText('스페이스바를 눌러 시작!', canvas.width / 2, canvas.height / 2 + 120);
+            }
+            
+            // 텍스트 정렬 원상복구
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+        }
+
+        // 게임 오버 화면 그리기
+        function drawGameOver() {
+            if (!isGameOver) return;
+            
+            // 반투명 검은색 오버레이
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 게임 오버 텍스트
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 40);
+            
+            // 최종 점수
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(`최종 점수: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+            
+            // 최고 점수 및 신기록 표시
+            ctx.font = '20px Arial';
+            if (score === highScore && score > 0) {
+                ctx.fillStyle = '#ffff00';
+                ctx.fillText('🏆 신기록!', canvas.width / 2, canvas.height / 2 + 50);
+                ctx.fillStyle = '#ffffff';
+            }
+            ctx.fillText(`최고 점수: ${highScore}`, canvas.width / 2, canvas.height / 2 + 80);
+            
+            // 재시작 안내
+            ctx.font = '18px Arial';
+            ctx.fillText('R키를 눌러 재시작', canvas.width / 2, canvas.height / 2 + 110);
+            
+            // 텍스트 정렬 원상복구
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+        }
+
+        // 게임 렌더링
+        function draw() {
+            // 시작 화면
+            if (gameState === 'start') {
+                drawStartScreen();
+                return;
+            }
+            
+            // 화면 지우기
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 그리기 순서: 게임필드 → 플레이어 → 총알 → 적 → 폭발 파티클 → 게임오버라인 → 점수 → 최고점수 → 게임오버화면
+            drawGameField();
+            drawPlayer();
+            drawBullets();
+            drawEnemies();
+            drawExplosionParticles();
+            drawGameOverLine();
+            drawScore();
+            drawHighScore();
+            drawGameOver();
+        }
+
+        // 메인 게임 루프
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 게임 시작
+        console.log('게임 초기화 완료. 플레이어 위치:', player.x, player.y);
+        
+        // 초기 도형 생성
+        spawnEnemy();
+        
+        // 게임 루프 시작
+        gameLoop();
+    </script>
+</body>
+</html>
